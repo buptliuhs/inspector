@@ -50,7 +50,10 @@ import { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/lib/hooks/useToast";
 import { ConnectionStatus, CLIENT_IDENTITY } from "../constants";
-import { isConnectionAuthError } from "../connectionAuthErrors";
+import {
+  isConnectionAuthError,
+  isTransportInitiatedAuthRedirect,
+} from "../connectionAuthErrors";
 import { Notification } from "../notificationTypes";
 import {
   auth,
@@ -388,6 +391,18 @@ export function useConnection({
   };
 
   const handleAuthError = async (error: unknown) => {
+    // A direct transport that holds an authProvider already ran the SDK's
+    // `auth()` on the 401 — including `redirectToAuthorization()` — before
+    // throwing UnauthorizedError, so the browser is already navigating to
+    // `/authorize`. Calling `auth()` again here would fire a duplicate
+    // authorization request (orphaning the pending `/authorize` state the first
+    // one created) and overwrite the saved PKCE code_verifier. Let the in-flight
+    // transport redirect stand; the caller still treats this as an auth error
+    // (isConnectionAuthError) and skips the error UI while we navigate away.
+    if (isTransportInitiatedAuthRedirect(error)) {
+      return false;
+    }
+
     if (isConnectionAuthError(error)) {
       let scope = oauthScope?.trim();
       const fetchFn =
